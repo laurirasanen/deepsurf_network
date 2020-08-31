@@ -17,7 +17,7 @@ class NetworkService(rpyc.Service):
         __instance = None
 
         move_actions = 9  # none and 8 directions
-        aim_actions = 3  # none and 2 directions
+        max_aim_action = 10.0  # 10 degrees of rotation per frame
 
         # The first model makes the predictions for Q-values which are used to
         # make a action.
@@ -54,7 +54,7 @@ class NetworkService(rpyc.Service):
         loss_function = keras.losses.Huber()
 
         # Number of frames to take random action and observe output
-        epsilon_random_frames = 0  # 50000
+        epsilon_random_frames = 50000
 
         # Number of frames for exploration
         epsilon_greedy_frames = 1000000.0
@@ -76,36 +76,34 @@ class NetworkService(rpyc.Service):
 
         def create_q_model(self):
             # Shape
-            inputs = layers.Input(shape=(92, 92, 3,))
+            inputs = layers.Input(shape=(187,))
 
-            # Convolutions
-            layer1 = layers.Conv2D(32, 8, strides=4, activation="relu")(inputs)
-            layer2 = layers.Conv2D(64, 4, strides=2, activation="relu")(layer1)
-            layer3 = layers.Conv2D(64, 3, strides=1, activation="relu")(layer2)
+            layer1 = layers.Dense(512, activation="relu")(inputs)
+            layer2 = layers.Dense(512, activation="relu")(layer1)
+            layer3 = layers.Dense(512, activation="relu")(layer2)
 
-            layer4 = layers.Flatten()(layer3)
-
-            layer5 = layers.Dense(512, activation="relu")(layer4)
-            move_actions = layers.Dense(self.move_actions, activation="linear")(layer5)
-
-            layer6 = layers.Dense(512, activation="relu")(layer4)
-            aim_actions = layers.Dense(self.aim_actions, activation="linear")(layer6)
+            move_actions = layers.Dense(self.move_actions, activation="softmax")(layer3)
+            aim_actions = layers.Dense(1, activation="linear")(layer3)
 
             return keras.Model(inputs=inputs, outputs=(move_actions, aim_actions,))
 
         def exposed_get_action(self, state: tuple):
+            state = self.convert_state(state)
             self.action_count += 1
 
             # Use epsilon-greedy for exploration
             if self.action_count < self.epsilon_random_frames or self.epsilon > np.random.rand(1)[0]:
                 # Take random action
-                action = (np.random.choice(self.move_actions), np.random.choice(self.aim_actions),)
+                action = (
+                    np.random.choice(self.move_actions),
+                    int(np.random.uniform(low=-self.max_aim_action, high=self.max_aim_action)),
+                )
             else:
                 # Predict action Q-values
                 state_tensor = tf.convert_to_tensor(state)
                 action_probs = self.model(state_tensor, training=False)
                 # Take best action
-                action = tf.argmax(action_probs[0]).numpy()
+                action = (tf.math.argmax(action_probs[0][0]).numpy(), int(tf.math.argmax(action_probs[1][0]).numpy()),)
 
             # Decay probability of taking random action
             self.epsilon -= self.epsilon_interval / self.epsilon_greedy_frames
@@ -116,7 +114,9 @@ class NetworkService(rpyc.Service):
             self.state_history.append(state)
             return action
 
-        def exposed_post_action(self, reward: float, state_next: any, done: bool):
+        def exposed_post_action(self, reward: float, state_next: tuple, done: bool):
+            state_next = self.convert_state(state_next)
+
             # Save actions and states in replay buffer
             self.state_next_history.append(state_next)
             self.done_history.append(done)
@@ -128,43 +128,47 @@ class NetworkService(rpyc.Service):
                 indices = np.random.choice(range(len(self.done_history)), size=self.batch_size)
 
                 # Using list comprehension to sample from replay buffer
-                state_sample = np.array([tf.convert_to_tensor(self.state_history[i]) for i in indices])
-                state_next_sample = np.array([tf.convert_to_tensor(self.state_next_history[i]) for i in indices])
+                state_sample = np.array([self.state_history[i] for i in indices])
+                state_next_sample = np.array([self.state_next_history[i] for i in indices])
                 rewards_sample = [self.rewards_history[i] for i in indices]
-                action_sample = [self.action_history[i] for i in indices]
+                move_action_sample = [self.action_history[i][0] for i in indices]
+                aim_action_sample = [self.action_history[i][1] for i in indices]
                 done_sample = tf.convert_to_tensor(
                     [float(self.done_history[i]) for i in indices]
                 )
 
                 # Build the updated Q-values for the sampled future states
                 # Use the target model for stability
-                future_rewards = self.model_target.predict(state_next_sample)
+                future_rewards = self.model_target.predict(state_next_sample[0])
                 # Q value = reward + discount factor * expected future reward
-                updated_q_values = rewards_sample + self.gamma * tf.reduce_max(
-                    future_rewards, axis=1
+                updated_q_values = rewards_sample + self.gamma * tf.math.reduce_max(
+                    future_rewards[0], axis=1
                 )
 
                 # If final frame set the last value to -1
                 updated_q_values = updated_q_values * (1 - done_sample) - done_sample
 
                 # Create a mask so we only calculate loss on the updated Q-values
-                masks = tf.one_hot(action_sample, (self.move_actions, self.aim_actions,))
+                mask1 = tf.one_hot(move_action_sample, self.move_actions)
+                mask2 = tf.one_hot(aim_action_sample, 1)
 
                 with tf.GradientTape() as tape:
                     # Train the model on the states and updated Q-values
-                    q_values = self.model(state_sample)
+                    q_values = self.model(state_sample[0])
 
                     # Apply the masks to the Q-values to get the Q-value for action taken
-                    q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
+                    q_action1 = tf.reduce_sum(tf.multiply(q_values[0], mask1), axis=1)
+                    q_action2 = tf.reduce_sum(tf.multiply(q_values[1], mask2), axis=1)
+
                     # Calculate loss between new Q-value and old Q-value
-                    loss = self.loss_function(updated_q_values, q_action)
+                    loss = self.loss_function(updated_q_values, q_action1)
+                    loss += self.loss_function(updated_q_values, q_action2)
 
                 # Backpropagation
                 grads = tape.gradient(loss, self.model.trainable_variables)
                 self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
             if self.action_count % self.update_target_network == 0:
-                # update the the target network with new weights
                 # update the the target network with new weights
                 self.model_target.set_weights(self.model.get_weights())
                 # Log details
@@ -187,6 +191,11 @@ class NetworkService(rpyc.Service):
             self.running_reward = np.mean(self.episode_reward_history)
 
             self.episode_count += 1
+
+        def convert_state(self, state):
+            return (
+                np.asarray(list(state[0]) + list(state[1]) + list(state[2])).astype(float),
+            )
 
 
 if __name__ == "__main__":
