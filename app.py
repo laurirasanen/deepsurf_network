@@ -4,6 +4,7 @@
 # >> IMPORTS
 # =============================================================================
 # Python
+import time
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -88,7 +89,6 @@ class NetworkService(rpyc.Service):
             return keras.Model(inputs=inputs, outputs=(move_actions, aim_actions,))
 
         def exposed_get_action(self, state: tuple):
-            state = self.convert_state(state)
             self.action_count += 1
 
             # Use epsilon-greedy for exploration
@@ -115,8 +115,6 @@ class NetworkService(rpyc.Service):
             return action
 
         def exposed_post_action(self, reward: float, state_next: tuple, done: bool):
-            state_next = self.convert_state(state_next)
-
             # Save actions and states in replay buffer
             self.state_next_history.append(state_next)
             self.done_history.append(done)
@@ -191,11 +189,6 @@ class NetworkService(rpyc.Service):
             self.running_reward = np.mean(self.episode_reward_history)
 
             self.episode_count += 1
-
-        def convert_state(self, state):
-            return (
-                np.asarray(list(state[0]) + list(state[1]) + list(state[2])).astype(float),
-            )
 
 
 if __name__ == "__main__":
