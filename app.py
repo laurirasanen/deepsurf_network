@@ -12,7 +12,6 @@ from tensorflow.keras import layers
 import rpyc
 from rpyc.utils.server import ThreadedServer
 
-
 class NetworkService(rpyc.Service):
     class exposed_Network(object):
         __instance = None
@@ -46,7 +45,7 @@ class NetworkService(rpyc.Service):
         max_memory_length = 100000
 
         # Train the model after 4 actions
-        update_after_actions = 4
+        update_after_actions = 256
 
         # How often to update the target network
         update_target_network = 10000
@@ -68,7 +67,7 @@ class NetworkService(rpyc.Service):
         epsilon_interval = (
                 epsilon_max - epsilon_min
         )  # Rate at which to reduce chance of random action being taken
-        batch_size = 32  # Size of batch taken from replay buffer
+        batch_size = 256  # Size of batch taken from replay buffer
         max_steps_per_episode = 10000
 
         def __init__(self):
@@ -88,7 +87,7 @@ class NetworkService(rpyc.Service):
 
             return keras.Model(inputs=inputs, outputs=(move_actions, aim_actions,))
 
-        def exposed_get_action(self, state: tuple):
+        def exposed_get_action(self, state):
             self.action_count += 1
 
             # Use epsilon-greedy for exploration
@@ -114,7 +113,7 @@ class NetworkService(rpyc.Service):
             self.state_history.append(state)
             return action
 
-        def exposed_post_action(self, reward: float, state_next: tuple, done: bool):
+        def exposed_post_action(self, reward: float, state_next, done: bool):
             # Save actions and states in replay buffer
             self.state_next_history.append(state_next)
             self.done_history.append(done)
@@ -137,7 +136,8 @@ class NetworkService(rpyc.Service):
 
                 # Build the updated Q-values for the sampled future states
                 # Use the target model for stability
-                future_rewards = self.model_target.predict(state_next_sample[0])
+                state_tensor = tf.convert_to_tensor(state_next_sample)
+                future_rewards = self.model_target.predict(state_tensor)
                 # Q value = reward + discount factor * expected future reward
                 updated_q_values = rewards_sample + self.gamma * tf.math.reduce_max(
                     future_rewards[0], axis=1
@@ -152,7 +152,7 @@ class NetworkService(rpyc.Service):
 
                 with tf.GradientTape() as tape:
                     # Train the model on the states and updated Q-values
-                    q_values = self.model(state_sample[0])
+                    q_values = self.model(state_sample)
 
                     # Apply the masks to the Q-values to get the Q-value for action taken
                     q_action1 = tf.reduce_sum(tf.multiply(q_values[0], mask1), axis=1)
