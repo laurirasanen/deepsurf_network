@@ -5,12 +5,14 @@
 # =============================================================================
 # Python
 import time
+import os
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 import rpyc
 from rpyc.utils.server import ThreadedServer
+
 
 class NetworkService(rpyc.Service):
     class exposed_Network(object):
@@ -48,7 +50,8 @@ class NetworkService(rpyc.Service):
         update_after_actions = 256
 
         # How often to update the target network
-        update_target_network = 10000
+        # update_target_network = 10000
+        update_target_network = update_after_actions * 4
 
         # Using huber loss for stability
         loss_function = keras.losses.Huber()
@@ -65,7 +68,7 @@ class NetworkService(rpyc.Service):
         epsilon_min = 0.1  # Minimum epsilon greedy parameter
         epsilon_max = 1.0  # Maximum epsilon greedy parameter
         epsilon_interval = (
-                epsilon_max - epsilon_min
+            epsilon_max - epsilon_min
         )  # Rate at which to reduce chance of random action being taken
         batch_size = 256  # Size of batch taken from replay buffer
         max_steps_per_episode = 10000
@@ -75,6 +78,10 @@ class NetworkService(rpyc.Service):
             self.model_target = self.create_q_model()
 
         def create_q_model(self):
+            if os.path.isdir("model"):
+                self.epsilon_random_frames = 0
+                return keras.models.load_model("model")
+
             # Shape
             inputs = layers.Input(shape=(187,))
 
@@ -84,25 +91,50 @@ class NetworkService(rpyc.Service):
 
             move_actions = layers.Dense(self.move_actions, activation="softmax")(layer3)
             aim_actions = layers.Dense(1, activation="linear")(layer3)
+            jump_action = layers.Dense(2, activation="softmax")(layer3)
+            duck_action = layers.Dense(2, activation="softmax")(layer3)
 
-            return keras.Model(inputs=inputs, outputs=(move_actions, aim_actions,))
+            return keras.Model(
+                inputs=inputs,
+                outputs=(
+                    move_actions,
+                    aim_actions,
+                    jump_action,
+                    duck_action,
+                ),
+            )
 
         def exposed_get_action(self, state):
             self.action_count += 1
 
             # Use epsilon-greedy for exploration
-            if self.action_count < self.epsilon_random_frames or self.epsilon > np.random.rand(1)[0]:
+            if (
+                self.action_count < self.epsilon_random_frames
+                or self.epsilon > np.random.rand(1)[0]
+            ):
                 # Take random action
                 action = (
                     np.random.choice(self.move_actions),
-                    int(np.random.uniform(low=-self.max_aim_action, high=self.max_aim_action)),
+                    int(
+                        np.random.uniform(
+                            low=-self.max_aim_action, high=self.max_aim_action
+                        )
+                    ),
+                    np.random.choice(2),
+                    np.random.choice(2),
                 )
             else:
                 # Predict action Q-values
                 state_tensor = tf.convert_to_tensor(state)
+                state_tensor = tf.expand_dims(state_tensor, 0)
                 action_probs = self.model(state_tensor, training=False)
                 # Take best action
-                action = (tf.math.argmax(action_probs[0][0]).numpy(), int(tf.math.argmax(action_probs[1][0]).numpy()),)
+                action = (
+                    tf.math.argmax(action_probs[0][0]).numpy(),
+                    int(tf.math.argmax(action_probs[1][0]).numpy()),
+                    tf.math.argmax(action_probs[2][0]).numpy(),
+                    tf.math.argmax(action_probs[3][0]).numpy(),
+                )
 
             # Decay probability of taking random action
             self.epsilon -= self.epsilon_interval / self.epsilon_greedy_frames
@@ -120,16 +152,25 @@ class NetworkService(rpyc.Service):
             self.rewards_history.append(reward)
 
             # Update every fourth frame once batch size is over 32
-            if self.action_count % self.update_after_actions == 0 and len(self.done_history) > self.batch_size:
+            if (
+                self.action_count % self.update_after_actions == 0
+                and len(self.done_history) > self.batch_size
+            ):
                 # Get indices of samples for replay buffers
-                indices = np.random.choice(range(len(self.done_history)), size=self.batch_size)
+                indices = np.random.choice(
+                    range(len(self.done_history)), size=self.batch_size
+                )
 
                 # Using list comprehension to sample from replay buffer
                 state_sample = np.array([self.state_history[i] for i in indices])
-                state_next_sample = np.array([self.state_next_history[i] for i in indices])
+                state_next_sample = np.array(
+                    [self.state_next_history[i] for i in indices]
+                )
                 rewards_sample = [self.rewards_history[i] for i in indices]
                 move_action_sample = [self.action_history[i][0] for i in indices]
                 aim_action_sample = [self.action_history[i][1] for i in indices]
+                jump_action_sample = [self.action_history[i][2] for i in indices]
+                duck_action_sample = [self.action_history[i][3] for i in indices]
                 done_sample = tf.convert_to_tensor(
                     [float(self.done_history[i]) for i in indices]
                 )
@@ -149,6 +190,8 @@ class NetworkService(rpyc.Service):
                 # Create a mask so we only calculate loss on the updated Q-values
                 mask1 = tf.one_hot(move_action_sample, self.move_actions)
                 mask2 = tf.one_hot(aim_action_sample, 1)
+                mask3 = tf.one_hot(jump_action_sample, 2)
+                mask4 = tf.one_hot(duck_action_sample, 2)
 
                 with tf.GradientTape() as tape:
                     # Train the model on the states and updated Q-values
@@ -157,21 +200,33 @@ class NetworkService(rpyc.Service):
                     # Apply the masks to the Q-values to get the Q-value for action taken
                     q_action1 = tf.reduce_sum(tf.multiply(q_values[0], mask1), axis=1)
                     q_action2 = tf.reduce_sum(tf.multiply(q_values[1], mask2), axis=1)
+                    q_action3 = tf.reduce_sum(tf.multiply(q_values[2], mask3), axis=1)
+                    q_action4 = tf.reduce_sum(tf.multiply(q_values[3], mask4), axis=1)
 
                     # Calculate loss between new Q-value and old Q-value
                     loss = self.loss_function(updated_q_values, q_action1)
                     loss += self.loss_function(updated_q_values, q_action2)
+                    loss += self.loss_function(updated_q_values, q_action3)
+                    loss += self.loss_function(updated_q_values, q_action4)
 
                 # Backpropagation
                 grads = tape.gradient(loss, self.model.trainable_variables)
-                self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+                self.optimizer.apply_gradients(
+                    zip(grads, self.model.trainable_variables)
+                )
 
             if self.action_count % self.update_target_network == 0:
                 # update the the target network with new weights
                 self.model_target.set_weights(self.model.get_weights())
                 # Log details
                 template = "running reward: {:.2f} at episode {}, frame count {}"
-                print(template.format(self.running_reward, self.episode_count, self.action_count))
+                print(
+                    template.format(
+                        self.running_reward, self.episode_count, self.action_count
+                    )
+                )
+                # save
+                self.model.save("model")
 
             # Limit the state and reward history
             if len(self.rewards_history) > self.max_memory_length:
