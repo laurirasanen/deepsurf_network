@@ -12,6 +12,9 @@ from tensorflow import keras
 from tensorflow.keras import layers
 import rpyc
 from rpyc.utils.server import ThreadedServer
+import pickle
+
+rpyc.core.protocol.DEFAULT_CONFIG["allow_pickle"] = True
 
 
 class NetworkService(rpyc.Service):
@@ -47,11 +50,10 @@ class NetworkService(rpyc.Service):
         max_memory_length = 100000
 
         # Train the model after 4 actions
-        update_after_actions = 256
+        update_after_actions = 4
 
         # How often to update the target network
-        # update_target_network = 10000
-        update_target_network = update_after_actions * 4
+        update_target_network = 10000
 
         # Using huber loss for stability
         loss_function = keras.losses.Huber()
@@ -70,7 +72,7 @@ class NetworkService(rpyc.Service):
         epsilon_interval = (
             epsilon_max - epsilon_min
         )  # Rate at which to reduce chance of random action being taken
-        batch_size = 256  # Size of batch taken from replay buffer
+        batch_size = 32  # Size of batch taken from replay buffer
         max_steps_per_episode = 10000
 
         def __init__(self):
@@ -105,6 +107,7 @@ class NetworkService(rpyc.Service):
             )
 
         def exposed_get_action(self, state):
+            state = pickle.loads(state)
             self.action_count += 1
 
             # Use epsilon-greedy for exploration
@@ -146,6 +149,7 @@ class NetworkService(rpyc.Service):
             return action
 
         def exposed_post_action(self, reward: float, state_next, done: bool):
+            state_next = pickle.loads(state_next)
             # Save actions and states in replay buffer
             self.state_next_history.append(state_next)
             self.done_history.append(done)
@@ -156,6 +160,7 @@ class NetworkService(rpyc.Service):
                 self.action_count % self.update_after_actions == 0
                 and len(self.done_history) > self.batch_size
             ):
+                time_start = time.time()
                 # Get indices of samples for replay buffers
                 indices = np.random.choice(
                     range(len(self.done_history)), size=self.batch_size
@@ -163,9 +168,11 @@ class NetworkService(rpyc.Service):
 
                 # Using list comprehension to sample from replay buffer
                 state_sample = np.array([self.state_history[i] for i in indices])
+                # state_sample = [self.state_history[i] for i in indices]
                 state_next_sample = np.array(
                     [self.state_next_history[i] for i in indices]
                 )
+                # state_next_sample = [self.state_next_history[i] for i in indices]
                 rewards_sample = [self.rewards_history[i] for i in indices]
                 move_action_sample = [self.action_history[i][0] for i in indices]
                 aim_action_sample = [self.action_history[i][1] for i in indices]
