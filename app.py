@@ -112,13 +112,15 @@ class NetworkService(rpyc.Service):
                 with open("optimizer.pkl", mode="rb") as file:
                     ow = pickle.load(file)
                     grad_vars = model.trainable_weights
-                    # zero_grads = [tf.zeros_like(w) for w in grad_vars]
-                    # self.optimizer.apply_gradients(zip(zero_grads, grad_vars))
-                    with tf.name_scope(self.optimizer._name):
-                        with tf.init_scope():
-                            self.optimizer._create_all_weights(grad_vars)
-                            self.optimizer.set_weights(ow)
-                            self.optimizer_loaded = True
+                    zero_grads = [tf.zeros_like(w) for w in grad_vars]
+                    self.optimizer.apply_gradients(zip(zero_grads, grad_vars))
+                    self.optimizer.set_weights(ow)
+                    self.optimizer_loaded = True
+                    # with tf.name_scope(self.optimizer._name):
+                    #     with tf.init_scope():
+                    #         self.optimizer._create_all_weights(grad_vars)
+                    #         self.optimizer.set_weights(ow)
+                    #         self.optimizer_loaded = True
 
             if os.path.isfile("weights.h5"):
                 model.load_weights("weights.h5")
