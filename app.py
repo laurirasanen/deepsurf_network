@@ -34,6 +34,7 @@ class NetworkService(rpyc.Service):
         model_target = None
 
         optimizer = keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
+        optimizer_loaded = False
 
         # Experience replay buffers
         action_history = []
@@ -49,8 +50,8 @@ class NetworkService(rpyc.Service):
         # Maximum replay length
         max_memory_length = 100000
 
-        # Train the model after 4 actions
-        update_after_actions = 4
+        # Train the model after actions
+        update_after_actions = 1024
 
         # How often to update the target network
         update_target_network = 10000
@@ -72,17 +73,17 @@ class NetworkService(rpyc.Service):
         epsilon_interval = (
             epsilon_max - epsilon_min
         )  # Rate at which to reduce chance of random action being taken
-        batch_size = 32  # Size of batch taken from replay buffer
-        max_steps_per_episode = 10000
+        batch_size = update_after_actions * 8  # Size of batch taken from replay buffer
 
         def __init__(self):
             self.model = self.create_q_model()
             self.model_target = self.create_q_model()
+            print(self.model.summary())
 
         def create_q_model(self):
-            if os.path.isdir("model"):
-                self.epsilon_random_frames = 0
-                return keras.models.load_model("model")
+            # if os.path.isdir("model"):
+            #     self.epsilon_random_frames = 0
+            #     return keras.models.load_model("model")
 
             # Shape
             inputs = layers.Input(shape=(187,))
@@ -96,7 +97,7 @@ class NetworkService(rpyc.Service):
             jump_action = layers.Dense(2, activation="softmax")(layer3)
             duck_action = layers.Dense(2, activation="softmax")(layer3)
 
-            return keras.Model(
+            model = keras.Model(
                 inputs=inputs,
                 outputs=(
                     move_actions,
@@ -105,6 +106,24 @@ class NetworkService(rpyc.Service):
                     duck_action,
                 ),
             )
+
+            # https://stackoverflow.com/questions/49503748/save-and-load-model-optimizer-state
+            if not self.optimizer_loaded and os.path.isfile("optimizer.pkl"):
+                with open("optimizer.pkl", mode="rb") as file:
+                    ow = pickle.load(file)
+                    grad_vars = model.trainable_weights
+                    # zero_grads = [tf.zeros_like(w) for w in grad_vars]
+                    # self.optimizer.apply_gradients(zip(zero_grads, grad_vars))
+                    with tf.name_scope(self.optimizer._name):
+                        with tf.init_scope():
+                            self.optimizer._create_all_weights(grad_vars)
+                            self.optimizer.set_weights(ow)
+                            self.optimizer_loaded = True
+
+            if os.path.isfile("weights.h5"):
+                model.load_weights("weights.h5")
+
+            return model
 
         def exposed_get_action(self, state):
             state = pickle.loads(state)
@@ -233,7 +252,11 @@ class NetworkService(rpyc.Service):
                     )
                 )
                 # save
-                self.model.save("model")
+                with open("optimizer.pkl", mode="wb") as file:
+                    ow = self.optimizer.get_weights()
+                    pickle.dump(ow, file)
+                # self.model.save("model")
+                self.model.save_weights("weights.h5")
 
             # Limit the state and reward history
             if len(self.rewards_history) > self.max_memory_length:
