@@ -34,7 +34,6 @@ class NetworkService(rpyc.Service):
         model_target = None
 
         optimizer = keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
-        optimizer_loaded = False
 
         # Experience replay buffers
         action_history = []
@@ -43,6 +42,7 @@ class NetworkService(rpyc.Service):
         rewards_history = []
         done_history = []
         episode_reward_history = []
+        episode_frame_count = 0
         running_reward = 0
         episode_count = 0
         action_count = 0
@@ -81,11 +81,6 @@ class NetworkService(rpyc.Service):
             print(self.model.summary())
 
         def create_q_model(self):
-            # if os.path.isdir("model"):
-            #     self.epsilon_random_frames = 0
-            #     return keras.models.load_model("model")
-
-            # Shape
             inputs = layers.Input(shape=(187,))
 
             layer1 = layers.Dense(512, activation="relu")(inputs)
@@ -108,19 +103,15 @@ class NetworkService(rpyc.Service):
             )
 
             # https://stackoverflow.com/questions/49503748/save-and-load-model-optimizer-state
-            if not self.optimizer_loaded and os.path.isfile("optimizer.pkl"):
+            if len(self.optimizer.get_weights()) == 0 and os.path.isfile(
+                "optimizer.pkl"
+            ):
                 with open("optimizer.pkl", mode="rb") as file:
                     ow = pickle.load(file)
                     grad_vars = model.trainable_weights
                     zero_grads = [tf.zeros_like(w) for w in grad_vars]
                     self.optimizer.apply_gradients(zip(zero_grads, grad_vars))
                     self.optimizer.set_weights(ow)
-                    self.optimizer_loaded = True
-                    # with tf.name_scope(self.optimizer._name):
-                    #     with tf.init_scope():
-                    #         self.optimizer._create_all_weights(grad_vars)
-                    #         self.optimizer.set_weights(ow)
-                    #         self.optimizer_loaded = True
 
             if os.path.isfile("weights.h5"):
                 model.load_weights("weights.h5")
@@ -182,6 +173,7 @@ class NetworkService(rpyc.Service):
             self.state_next_history.append(state_next)
             self.done_history.append(done)
             self.rewards_history.append(reward)
+            self.episode_frame_count += 1
 
             # Update every fourth frame once batch size is over 32
             if (
@@ -289,8 +281,9 @@ class NetworkService(rpyc.Service):
             self.running_reward = np.mean(self.episode_reward_history)
             self.episode_count += 1
             print(
-                f"episode {self.episode_count} reward {self.episode_reward_history[-1]}"
+                f"episode {self.episode_count} reward {self.episode_reward_history[-1]}, mean frame {np.mean(self.rewards_history[-self.episode_frame_count:])}"
             )
+            self.episode_frame_count = 0
 
 
 if __name__ == "__main__":
