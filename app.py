@@ -125,6 +125,13 @@ class NetworkService(rpyc.Service):
             if os.path.isfile("weights.h5"):
                 model.load_weights("weights.h5")
 
+            if os.path.isfile("settings.pkl"):
+                with open("settings.pkl", mode="rb") as file:
+                    s = pickle.load(file)
+                    self.epsilon = s["epsilon"]
+                    self.action_count = s["action_count"]
+                    self.episode_count = s["episode_count"]
+
             return model
 
         def exposed_get_action(self, state):
@@ -259,6 +266,12 @@ class NetworkService(rpyc.Service):
                     pickle.dump(ow, file)
                 # self.model.save("model")
                 self.model.save_weights("weights.h5")
+                with open("settings.pkl", mode="wb") as file:
+                    s = {}
+                    s["epsilon"] = self.epsilon
+                    s["action_count"] = self.action_count
+                    s["episode_count"] = self.episode_count
+                    pickle.dump(s, file)
 
             # Limit the state and reward history
             if len(self.rewards_history) > self.max_memory_length:
@@ -274,8 +287,10 @@ class NetworkService(rpyc.Service):
             if len(self.episode_reward_history) > 100:
                 del self.episode_reward_history[:1]
             self.running_reward = np.mean(self.episode_reward_history)
-
             self.episode_count += 1
+            print(
+                f"episode {self.episode_count} reward {self.episode_reward_history[-1]}"
+            )
 
 
 if __name__ == "__main__":
