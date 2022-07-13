@@ -15,10 +15,11 @@ if __name__ == "__main__":
     # construct a fake state
     time_start = time.time()
     state = []
-    for x in range(0, 92):
+    for x in range(0, 242):
         state.append(1000.0)
-    for x in range(0, 92):
+    for x in range(0, 242):
         state.append(0.0)
+    state.extend([0.0, 0.0, 0.0])
     state.extend([0.0, 0.0, 0.0])
     state = pickle.dumps(state)
     print(f"action create time: {(time.time() - time_start) * 1000.0}ms")
