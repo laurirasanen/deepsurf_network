@@ -212,7 +212,7 @@ class NetworkService(rpyc.Service):
                 # TODO: this is probably wrong
                 updated_q_values = rewards_sample + self.gamma * (
                     tf.math.reduce_max(future_rewards[0], axis=1)
-                    + tf.math.reduce_max(future_rewards[1], axis=1)
+                    + tf.math.reduce_sum(future_rewards[1], axis=1)
                     + tf.math.reduce_max(future_rewards[2], axis=1)
                     + tf.math.reduce_max(future_rewards[3], axis=1)
                 )
