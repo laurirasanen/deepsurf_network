@@ -170,6 +170,24 @@ class NetworkService(rpyc.Service):
             self.state_history.append(state)
             return action
 
+        # get action without exploration for running
+        def exposed_get_action_run(self, state):
+            state = pickle.loads(state)
+
+            # Predict action Q-values
+            state_tensor = tf.convert_to_tensor(state)
+            state_tensor = tf.expand_dims(state_tensor, 0)
+            action_probs = self.model(state_tensor, training=False)
+            # Take best action
+            action = (
+                tf.math.argmax(action_probs[0][0]).numpy(),
+                tf.math.argmax(action_probs[1][0]).numpy(),
+                tf.math.argmax(action_probs[2][0]).numpy(),
+                tf.math.argmax(action_probs[3][0]).numpy(),
+                tf.math.argmax(action_probs[4][0]).numpy(),
+            )
+            return action
+
         def exposed_post_action(self, reward: float, state_next, done: bool):
             state_next = pickle.loads(state_next)
             # Save actions and states in replay buffer
