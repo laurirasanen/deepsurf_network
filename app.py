@@ -22,7 +22,9 @@ class NetworkService(rpyc.Service):
         __instance = None
 
         move_actions = 9  # none and 8 directions
-        max_aim_action = 10.0  # 10 degrees of rotation per frame
+        max_aim_action = (
+            1.0  # max degrees of rotation per frame when taking random actions
+        )
 
         # The first model makes the predictions for Q-values which are used to
         # make a action.
@@ -88,7 +90,7 @@ class NetworkService(rpyc.Service):
             layer3 = layers.Dense(512, activation="relu")(layer2)
 
             move_actions = layers.Dense(self.move_actions, activation="softmax")(layer3)
-            aim_actions = layers.Dense(1, activation="linear")(layer3)
+            aim_actions = layers.Dense(2, activation="linear")(layer3)
             jump_action = layers.Dense(2, activation="softmax")(layer3)
             duck_action = layers.Dense(2, activation="softmax")(layer3)
 
@@ -134,14 +136,13 @@ class NetworkService(rpyc.Service):
                 self.action_count < self.epsilon_random_frames
                 or self.epsilon > np.random.rand(1)[0]
             ):
+                aim_action = np.random.uniform(
+                    low=-self.max_aim_action, high=self.max_aim_action, size=2
+                )
                 # Take random action
                 action = (
                     np.random.choice(self.move_actions),
-                    int(
-                        np.random.uniform(
-                            low=-self.max_aim_action, high=self.max_aim_action
-                        )
-                    ),
+                    [float(aim_action[0]), float(aim_action[1])],
                     np.random.choice(2),
                     np.random.choice(2),
                 )
@@ -151,9 +152,10 @@ class NetworkService(rpyc.Service):
                 state_tensor = tf.expand_dims(state_tensor, 0)
                 action_probs = self.model(state_tensor, training=False)
                 # Take best action
+                aim_action = action_probs[1][0].numpy()
                 action = (
                     tf.math.argmax(action_probs[0][0]).numpy(),
-                    int(tf.math.argmax(action_probs[1][0]).numpy()),
+                    [float(aim_action[0]), float(aim_action[1])],
                     tf.math.argmax(action_probs[2][0]).numpy(),
                     tf.math.argmax(action_probs[3][0]).numpy(),
                 )
@@ -180,7 +182,6 @@ class NetworkService(rpyc.Service):
                 self.action_count % self.update_after_actions == 0
                 and len(self.done_history) > self.batch_size
             ):
-                time_start = time.time()
                 # Get indices of samples for replay buffers
                 indices = np.random.choice(
                     range(len(self.done_history)), size=self.batch_size
@@ -195,7 +196,8 @@ class NetworkService(rpyc.Service):
                 # state_next_sample = [self.state_next_history[i] for i in indices]
                 rewards_sample = [self.rewards_history[i] for i in indices]
                 move_action_sample = [self.action_history[i][0] for i in indices]
-                aim_action_sample = [self.action_history[i][1] for i in indices]
+                aim_action_x_sample = [self.action_history[i][1][0] for i in indices]
+                aim_action_y_sample = [self.action_history[i][1][1] for i in indices]
                 jump_action_sample = [self.action_history[i][2] for i in indices]
                 duck_action_sample = [self.action_history[i][3] for i in indices]
                 done_sample = tf.convert_to_tensor(
@@ -207,8 +209,12 @@ class NetworkService(rpyc.Service):
                 state_tensor = tf.convert_to_tensor(state_next_sample)
                 future_rewards = self.model_target.predict(state_tensor)
                 # Q value = reward + discount factor * expected future reward
-                updated_q_values = rewards_sample + self.gamma * tf.math.reduce_max(
-                    future_rewards[0], axis=1
+                # TODO: this is probably wrong
+                updated_q_values = rewards_sample + self.gamma * (
+                    tf.math.reduce_max(future_rewards[0], axis=1)
+                    + tf.math.reduce_max(future_rewards[1], axis=1)
+                    + tf.math.reduce_max(future_rewards[2], axis=1)
+                    + tf.math.reduce_max(future_rewards[3], axis=1)
                 )
 
                 # If final frame set the last value to -1
@@ -216,7 +222,7 @@ class NetworkService(rpyc.Service):
 
                 # Create a mask so we only calculate loss on the updated Q-values
                 mask1 = tf.one_hot(move_action_sample, self.move_actions)
-                mask2 = tf.one_hot(aim_action_sample, 1)
+                # mask2 = tf.one_hot(aim_action_x_sample, 2)
                 mask3 = tf.one_hot(jump_action_sample, 2)
                 mask4 = tf.one_hot(duck_action_sample, 2)
 
@@ -226,7 +232,9 @@ class NetworkService(rpyc.Service):
 
                     # Apply the masks to the Q-values to get the Q-value for action taken
                     q_action1 = tf.reduce_sum(tf.multiply(q_values[0], mask1), axis=1)
-                    q_action2 = tf.reduce_sum(tf.multiply(q_values[1], mask2), axis=1)
+                    # q_action2 = tf.reduce_sum(tf.multiply(q_values[1], mask2), axis=1)
+                    # TODO: this is probably wrong
+                    q_action2 = tf.reduce_sum(q_values[1], axis=1)
                     q_action3 = tf.reduce_sum(tf.multiply(q_values[2], mask3), axis=1)
                     q_action4 = tf.reduce_sum(tf.multiply(q_values[3], mask4), axis=1)
 
