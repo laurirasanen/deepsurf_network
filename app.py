@@ -84,15 +84,15 @@ class NetworkService(rpyc.Service):
             print(self.model.summary())
 
         def create_q_model(self):
-            inputs = layers.Input(shape=(490,))
+            inputs = layers.Input(shape=(193,))
 
-            layer1 = layers.Dense(512, activation="relu")(inputs)
-            layer2 = layers.Dense(512, activation="relu")(layer1)
-            layer3 = layers.Dense(512, activation="relu")(layer2)
+            layer1 = layers.Dense(2048, activation="relu")(inputs)
+            layer2 = layers.Dense(2048, activation="relu")(layer1)
+            layer3 = layers.Dense(2048, activation="relu")(layer2)
 
             move_actions = layers.Dense(self.move_actions, activation="softmax")(layer3)
-            yaw_actions = layers.Dense(self.aim_actions, activation="softmax")(layer3)
-            pitch_actions = layers.Dense(self.aim_actions, activation="softmax")(layer3)
+            yaw_action = layers.Dense(self.aim_actions, activation="softmax")(layer3)
+            pitch_action = layers.Dense(self.aim_actions, activation="softmax")(layer3)
             jump_action = layers.Dense(2, activation="softmax")(layer3)
             duck_action = layers.Dense(2, activation="softmax")(layer3)
 
@@ -100,8 +100,8 @@ class NetworkService(rpyc.Service):
                 inputs=inputs,
                 outputs=(
                     move_actions,
-                    yaw_actions,
-                    pitch_actions,
+                    yaw_action,
+                    pitch_action,
                     jump_action,
                     duck_action,
                 ),
