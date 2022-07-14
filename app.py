@@ -54,7 +54,7 @@ class NetworkService(rpyc.Service):
         max_memory_length = 100000
 
         # Train the model after actions
-        update_after_actions = 1024
+        update_after_actions = 4096
 
         # How often to update the target network
         update_target_network = 10000
@@ -76,7 +76,7 @@ class NetworkService(rpyc.Service):
         epsilon_interval = (
             epsilon_max - epsilon_min
         )  # Rate at which to reduce chance of random action being taken
-        batch_size = update_after_actions * 8  # Size of batch taken from replay buffer
+        batch_size = 4096  # Size of batch taken from replay buffer
 
         def __init__(self):
             self.model = self.create_q_model()
@@ -168,6 +168,13 @@ class NetworkService(rpyc.Service):
             # Save actions and states in replay buffer
             self.action_history.append(action)
             self.state_history.append(state)
+            # Always return ints -
+            # numpy -> int conversion takes about 4ms for each variable in Source.Python
+            action[0] = int(action[0])
+            action[1] = int(action[1])
+            action[2] = int(action[2])
+            action[3] = int(action[3])
+            action[4] = int(action[4])
             return action
 
         # get action without exploration for running
@@ -180,11 +187,11 @@ class NetworkService(rpyc.Service):
             action_probs = self.model(state_tensor, training=False)
             # Take best action
             action = (
-                tf.math.argmax(action_probs[0][0]).numpy(),
-                tf.math.argmax(action_probs[1][0]).numpy(),
-                tf.math.argmax(action_probs[2][0]).numpy(),
-                tf.math.argmax(action_probs[3][0]).numpy(),
-                tf.math.argmax(action_probs[4][0]).numpy(),
+                int(tf.math.argmax(action_probs[0][0]).numpy()),
+                int(tf.math.argmax(action_probs[1][0]).numpy()),
+                int(tf.math.argmax(action_probs[2][0]).numpy()),
+                int(tf.math.argmax(action_probs[3][0]).numpy()),
+                int(tf.math.argmax(action_probs[4][0]).numpy()),
             )
             return action
 
@@ -196,7 +203,7 @@ class NetworkService(rpyc.Service):
             self.rewards_history.append(reward)
             self.episode_frame_count += 1
 
-            # Update every fourth frame once batch size is over 32
+            # Update
             if (
                 self.action_count % self.update_after_actions == 0
                 and len(self.done_history) > self.batch_size
