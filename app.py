@@ -170,12 +170,13 @@ class NetworkService(rpyc.Service):
             self.state_history.append(state)
             # Always return ints -
             # numpy -> int conversion takes about 4ms for each variable in Source.Python
-            action[0] = int(action[0])
-            action[1] = int(action[1])
-            action[2] = int(action[2])
-            action[3] = int(action[3])
-            action[4] = int(action[4])
-            return action
+            return (
+                int(action[0]),
+                int(action[1]),
+                int(action[2]),
+                int(action[3]),
+                int(action[4]),
+            )
 
         # get action without exploration for running
         def exposed_get_action_run(self, state):
