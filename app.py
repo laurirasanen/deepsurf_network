@@ -317,9 +317,9 @@ class NetworkService(rpyc.Service):
                 del self.episode_reward_history[:1]
             self.running_reward = np.mean(self.episode_reward_history)
             self.episode_count += 1
-            print(
-                f"episode {self.episode_count} reward {self.episode_reward_history[-1]}, mean frame {np.mean(self.rewards_history[-self.episode_frame_count:])}"
-            )
+            # print(
+            #     f"episode {self.episode_count} reward {self.episode_reward_history[-1]}, mean frame {np.mean(self.rewards_history[-self.episode_frame_count:])}"
+            # )
             self.episode_frame_count = 0
 
 
