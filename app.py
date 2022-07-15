@@ -130,6 +130,10 @@ class NetworkService(rpyc.Service):
 
             return model
 
+        def exposed_explore(self):
+            print(f"resetting epsilon {self.epsilon} -> {self.epsilon_max}")
+            self.epsilon = self.epsilon_max
+
         def exposed_get_action(self, state):
             state = pickle.loads(state)
             self.action_count += 1
@@ -283,10 +287,15 @@ class NetworkService(rpyc.Service):
                 # update the the target network with new weights
                 self.model_target.set_weights(self.model.get_weights())
                 # Log details
-                template = "running reward: {:.2f} at episode {}, frame count {}"
+                template = (
+                    "running reward: {:.2f} at episode {}, frame count {}, epsilon: {}"
+                )
                 print(
                     template.format(
-                        self.running_reward, self.episode_count, self.action_count
+                        self.running_reward,
+                        self.episode_count,
+                        self.action_count,
+                        self.epsilon,
                     )
                 )
                 # save
