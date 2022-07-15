@@ -51,22 +51,22 @@ class NetworkService(rpyc.Service):
         action_count = 0
 
         # Maximum replay length
-        max_memory_length = 100000
+        max_memory_length = 100_000
 
         # Train the model after actions
         update_after_actions = 4096
 
         # How often to update the target network
-        update_target_network = 10000
+        update_target_network = 10_000
 
         # Using huber loss for stability
         loss_function = keras.losses.Huber()
 
         # Number of frames to take random action and observe output
-        epsilon_random_frames = 50000
+        epsilon_random_frames = 500_000
 
         # Number of frames for exploration
-        epsilon_greedy_frames = 1000000.0
+        epsilon_greedy_frames = 10_000_000.0
 
         # Configuration parameters for the whole setup
         gamma = 0.99  # Discount factor for past rewards
