@@ -63,10 +63,10 @@ class NetworkService(rpyc.Service):
         loss_function = keras.losses.Huber()
 
         # Number of frames to take random action and observe output
-        epsilon_random_frames = 500_000
+        epsilon_random_frames = 50_000
 
         # Number of frames for exploration
-        epsilon_greedy_frames = 10_000_000.0
+        epsilon_greedy_frames = 1_000_000.0
 
         # Configuration parameters for the whole setup
         gamma = 0.99  # Discount factor for past rewards
